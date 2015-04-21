@@ -1,9 +1,9 @@
 # -- encoding: UTF-8 --
 from django.core.exceptions import ValidationError
-
 from django.forms import BaseForm
 from django.utils.translation import ugettext_lazy
 from enumfields import Enum, EnumField
+from enumfields.fields import freeze_enum, unfreeze_enum
 import pytest
 import six
 from six import u
@@ -69,3 +69,41 @@ def test_invalid_to_python_fails():
 
 def test_import_by_string():
     assert EnumField("tests.test_enums.Color").enum == Color
+
+def test_enum_freeze():
+    frozen_enum = freeze_enum(Color)
+    assert isinstance(frozen_enum, tuple)
+    assert len(frozen_enum) == 3
+
+    module_name, class_name, choices = frozen_enum
+    assert module_name == 'tests.test_enums'
+    assert class_name == 'Color'
+    assert set(choices) == set((choice.name, choice.value) for choice in Color)
+
+def test_enum_unfreeze_from_tuple():
+    frozen_enum = (
+        'tests.test_enums',
+        'Color',
+        (('RED', 'r'), ('GREEN', 'g'), ('BLUE', 'b')),
+    )
+
+    Color = unfreeze_enum(frozen_enum)
+    assert Color.__name__ == 'Color'
+    assert Color.__module__ == 'tests.test_enums'
+    assert Color.RED.value == 'r'
+    assert Color.GREEN.value == 'g'
+    assert Color.BLUE.value == 'b'
+
+def test_enum_unfreeze_from_str():
+    frozen_enum = repr((
+        'tests.test_enums',
+        'Color',
+        (('RED', 'r'), ('GREEN', 'g'), ('BLUE', 'b')),
+    ))
+
+    Color = unfreeze_enum(frozen_enum)
+    assert Color.__name__ == 'Color'
+    assert Color.__module__ == 'tests.test_enums'
+    assert Color.RED.value == 'r'
+    assert Color.GREEN.value == 'g'
+    assert Color.BLUE.value == 'b'

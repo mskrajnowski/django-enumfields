@@ -1,18 +1,23 @@
+import ast
+
 import django
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.fields import NOT_PROVIDED, BLANK_CHOICE_DASH
 from django.utils.functional import cached_property
 from enum import Enum
-from .forms import EnumChoiceField
 import six
-from django.db.models.fields import NOT_PROVIDED, BLANK_CHOICE_DASH
 
 from .compat import import_string
+from .forms import EnumChoiceField
+
 
 class EnumFieldMixin(six.with_metaclass(models.SubfieldBase)):
     def __init__(self, enum, **options):
         if isinstance(enum, six.string_types):
             self.enum = import_string(enum)
+        elif isinstance(enum, tuple):
+            self.enum = unfreeze_enum(enum)
         else:
             self.enum = enum
 
@@ -121,8 +126,36 @@ class EnumIntegerField(EnumFieldMixin, models.IntegerField):
 
 # South compatibility stuff
 
-def converter_func(enum_class):
-    return "'%s.%s'" % (enum_class.__module__, enum_class.__name__)
+def freeze_enum(enum_class):
+    """
+    Serializes an Enum class to a tuple of:
+    - module name
+    - class name
+    - choices (tuple of name, value pairs)
+    """
+
+    choices = tuple(
+        (choice.name, choice.value)
+        for choice in enum_class
+    )
+
+    return (enum_class.__module__, enum_class.__name__, choices)
+
+
+def freeze_enum_to_str(enum_class):
+    return repr(freeze_enum(enum_class))
+
+
+def unfreeze_enum(enum_tuple):
+    """
+    Deserializes a tuple created with freeze_enum into an Enum class
+    """
+
+    if isinstance(enum_tuple, six.string_types):
+        enum_tuple = ast.literal_eval(enum_tuple)
+
+    module_name, class_name, choices = enum_tuple
+    return Enum(class_name, choices, module=module_name)
 
 
 def enum_value(an_enum):
@@ -134,9 +167,16 @@ rules = [
         [EnumFieldMixin],
         [],
         {
-            "enum": ["enum", {'is_django_function': True, "converter": converter_func}],
-            "default": ['default', {'default': NOT_PROVIDED, 'ignore_dynamics': True,
-                                    'converter': enum_value}]},
+            "enum": ["enum", {
+                'is_django_function': True,
+                'converter': freeze_enum_to_str,
+            }],
+            "default": ['default', {
+                'default': NOT_PROVIDED,
+                'ignore_dynamics': True,
+                'converter': enum_value,
+            }],
+        },
     )
 ]
 
