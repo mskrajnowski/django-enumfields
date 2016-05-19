@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import django
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -13,6 +15,8 @@ class EnumFieldMixin(six.with_metaclass(models.SubfieldBase)):
     def __init__(self, enum, **options):
         if isinstance(enum, six.string_types):
             self.enum = import_string(enum)
+        elif isinstance(enum, (tuple, list)):
+            self.enum = type('TmpEnum', (Enum,), dict(enum))
         else:
             self.enum = enum
 
@@ -58,7 +62,12 @@ class EnumFieldMixin(six.with_metaclass(models.SubfieldBase)):
 
     def deconstruct(self):
         name, path, args, kwargs = super(EnumFieldMixin, self).deconstruct()
-        kwargs['enum'] = self.enum
+
+        kwargs['enum'] = [
+            (option.name, option.value)
+            for option in self.enum
+        ]
+
         kwargs.pop('choices', None)
         if 'default' in kwargs:
             if hasattr(kwargs["default"], "value"):
