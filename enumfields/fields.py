@@ -1,15 +1,15 @@
-from collections import OrderedDict
+import functools
 
 import django
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.fields import NOT_PROVIDED, BLANK_CHOICE_DASH
 from django.utils.functional import cached_property
 from enum import Enum
-from .forms import EnumChoiceField
 import six
-from django.db.models.fields import NOT_PROVIDED, BLANK_CHOICE_DASH
 
 from .compat import import_string
+from .forms import EnumChoiceField
 
 
 _EnumFieldMixinBase = (
@@ -36,8 +36,12 @@ class EnumFieldMixin(_EnumFieldMixinBase):
             self._values_map.setdefault(item.value, item)
             self._values_map.setdefault(str(item.value), item)
 
+        # choices for the TypedChoiceField
         if "choices" not in options:
-            options["choices"] = [(i, getattr(i, 'label', i.name)) for i in self.enum]  # choices for the TypedChoiceField
+            options["choices"] = [
+                (i, getattr(i, 'label', i.name))
+                for i in self.enum
+            ]
 
         super(EnumFieldMixin, self).__init__(**options)
 
@@ -64,10 +68,11 @@ class EnumFieldMixin(_EnumFieldMixinBase):
 
     def value_to_string(self, obj):
         """
-        This method is needed to support proper serialization. While its name is value_to_string()
-        the real meaning of the method is to convert the value to some serializable format.
-        Since most of the enum values are strings or integers we WILL NOT convert it to string
-        to enable integers to be serialized natively.
+        This method is needed to support proper serialization.
+        While its name is value_to_string() the real meaning of the method
+        is to convert the value to some serializable format. Since most of
+        the enum values are strings or integers we WILL NOT convert it
+        to string to enable integers to be serialized natively.
         """
         value = self._get_val_from_obj(obj)
         return value.value if value else None
@@ -102,24 +107,36 @@ class EnumFieldMixin(_EnumFieldMixinBase):
     def get_choices(self, include_blank=True, blank_choice=BLANK_CHOICE_DASH):
         # Force enum fields' options to use the `value` of the enumeration
         # member as the `value` of SelectFields and similar.
+
+        base_choices = (
+            super(EnumFieldMixin, self)
+            .get_choices(include_blank, blank_choice)
+        )
+
         return [
             (i.value if i else i, display)
-            for (i, display)
-            in super(EnumFieldMixin, self).get_choices(include_blank, blank_choice)
+            for (i, display) in base_choices
         ]
 
     def formfield(self, form_class=None, choices_form_class=None, **kwargs):
+        # Use a better-compatible implementation of `formfield`
+        # for old versions of Django. It's unfortunate that we need
+        # to do this, but since the project supports Django 1.5,
+        # we have to do it.
+        if django.VERSION < (1, 6):
+            from .compat import formfield
+            formfield = functools.partial(formfield, db_field=self)
+        else:
+            formfield = super(EnumFieldMixin, self).formfield
+
         if not choices_form_class:
             choices_form_class = EnumChoiceField
 
-        if django.VERSION < (1, 6):
-            # Use a better-compatible implementation of `formfield` for old versions of Django.
-            # It's unfortunate that we need to do this, but since the project supports Django 1.5,
-            # we have to do it.
-            from .compat import formfield
-            return formfield(db_field=self, form_class=form_class, choices_form_class=choices_form_class, **kwargs)
-
-        return super(EnumFieldMixin, self).formfield(form_class=form_class, choices_form_class=choices_form_class, **kwargs)
+        return formfield(
+            form_class=form_class,
+            choices_form_class=choices_form_class,
+            **kwargs
+        )
 
 
 class EnumField(EnumFieldMixin, models.CharField):
@@ -168,16 +185,22 @@ def enum_value(an_enum):
     raise ValueError("%s is not a enum" % an_enum)
 
 
-
 rules = [
     (
         [EnumFieldMixin],
         [],
         {
-            "enum": ["enum", {'is_django_function': True, "converter": converter_func}],
-            "default": ['default', {'default': NOT_PROVIDED, 'ignore_dynamics': True,
-                                    'converter': enum_value}]},
-    )
+            'enum': ['enum', {
+                'is_django_function': True,
+                'converter': converter_func,
+            }],
+            'default': ['default', {
+                'default': NOT_PROVIDED,
+                'ignore_dynamics': True,
+                'converter': enum_value,
+            }],
+        },
+    ),
 ]
 
 try:
