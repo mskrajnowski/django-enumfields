@@ -11,7 +11,15 @@ from django.db.models.fields import NOT_PROVIDED, BLANK_CHOICE_DASH
 
 from .compat import import_string
 
-class EnumFieldMixin(six.with_metaclass(models.SubfieldBase)):
+
+_EnumFieldMixinBase = (
+    six.with_metaclass(models.SubfieldBase)
+    if django.VERSION < (1, 8)
+    else object
+)
+
+
+class EnumFieldMixin(_EnumFieldMixinBase):
     def __init__(self, enum, **options):
         if isinstance(enum, six.string_types):
             self.enum = import_string(enum)
@@ -19,6 +27,14 @@ class EnumFieldMixin(six.with_metaclass(models.SubfieldBase)):
             self.enum = type('TmpEnum', (Enum,), dict(enum))
         else:
             self.enum = enum
+
+        self._values_map = {}
+
+        for item in self.enum:
+            self._values_map.setdefault(item, item)
+            self._values_map.setdefault(str(item), item)
+            self._values_map.setdefault(item.value, item)
+            self._values_map.setdefault(str(item.value), item)
 
         if "choices" not in options:
             options["choices"] = [(i, getattr(i, 'label', i.name)) for i in self.enum]  # choices for the TypedChoiceField
@@ -28,15 +44,23 @@ class EnumFieldMixin(six.with_metaclass(models.SubfieldBase)):
     def to_python(self, value):
         if value is None or value == '':
             return None
-        for m in self.enum:
-            if value == m:
-                return m
-            if value == m.value or str(value) == str(m.value) or str(value) == str(m):
-                return m
-        raise ValidationError('%s is not a valid value for enum %s' % (value, self.enum), code="invalid_enum_value")
+
+        try:
+            return (
+                self._values_map.get(value) or
+                self._values_map[str(value)]
+            )
+        except KeyError:
+            raise ValidationError(
+                '%s is not a valid value for enum %s' % (value, self.enum),
+                code="invalid_enum_value",
+            )
 
     def get_prep_value(self, value):
         return None if value is None else value.value
+
+    def from_db_value(self, value, expression, connection, context):
+        return None if value is None else self._values_map[value]
 
     def value_to_string(self, obj):
         """
